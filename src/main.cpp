@@ -23,7 +23,7 @@
 
 #define FTPS_ADDR               "188.166.217.51"
 #define FTPS_PRT                7021
-#define FTPS_PATH               "/BER/"
+#define FTPS_PATH               "/DEV/" // "/BER/" 
 #define FTPS_USRN               "tung"
 #define FTPS_PASS               "anundaJJ795"
 #define FTPS_TYPE               1
@@ -65,7 +65,7 @@ struct NETWORK_INFO {
 NETWORK_INFO networkinfo;
 
 struct BATT_INFO {
-    float batt_volt;
+    String batt_volt;
     String batt_level;
 };
 
@@ -79,9 +79,6 @@ static BLEUUID charUUID("ebe0ccc1-7a0a-4b0c-8a1a-6ff2997da3a6");
 
 void decrypted(BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify)
 {
-    // Serial.printf("pData[0] = %x ",pData[0]);
-    // Serial.printf("pData[1] = %x ",pData[1]);
-    // Serial.println();
     int16_t tmp_data = (pData[0] | (pData[1] << 8));
     tempandhumi.temp = ((float)tmp_data*0.01);
     tempandhumi.humi = pData[2];
@@ -110,14 +107,12 @@ void modemPowerOn()
 {
     pinMode(PIN_SUP, OUTPUT);
     digitalWrite(PIN_SUP, HIGH);
-
     pinMode(PIN_RST, OUTPUT);
     digitalWrite(PIN_RST, LOW);
     delay(100);
     digitalWrite(PIN_RST, HIGH);
     delay(3000);
     digitalWrite(PIN_RST, LOW);
-
     pinMode(PWR_PIN, OUTPUT);
     digitalWrite(PWR_PIN, LOW);
     delay(100);
@@ -138,6 +133,7 @@ void readBattlevel()
     delay(1000);
     batt_adc_avg = (batt_adc_avg / batt_val_idx) + 212;
     float batt_v = (2 * batt_adc_avg * 3.3) / 4096;
+    battinfo.batt_volt = String(batt_v, 2);
     float batt_level = 100 * (1 - ((4.24 - batt_v) / (4.24 - 2.5))); // Batt off @ v = 2.5 v, full @ v = 4.12 v
     battinfo.batt_level = String(batt_level, 2);
 }
@@ -319,21 +315,22 @@ void readcellinfo()
 
 String makejson()
 {
-    const size_t bufferSize = JSON_OBJECT_SIZE(6) + JSON_OBJECT_SIZE(4) + 100;
+    const size_t bufferSize = JSON_OBJECT_SIZE(13) + 100; //JSON_OBJECT_SIZE(6) + JSON_OBJECT_SIZE(4) + 100;
     DynamicJsonDocument doc(bufferSize);
 
     doc["Date"] = networkinfo.date;
     doc["Time"] = networkinfo.time;
+    doc["Batt_V"] = battinfo.batt_volt;
     doc["Batt_Lev"] = battinfo.batt_level;
     doc["Temp"] = tempandhumi.temp;
     doc["Humi"] = tempandhumi.humi;
     doc["Lat"] = networkinfo.lat;
     doc["Lon"] = networkinfo.lon;
-    // doc["MCC"] = networkinfo.mcc;
-    // doc["MNC"] = networkinfo.mnc;
-    // doc["LAC"] = networkinfo.lac;
-    // doc["SCellID"] = networkinfo.cid;
-    // doc["RSSNR"] = networkinfo.rssnr;
+    doc["MCC"] = networkinfo.mcc;
+    doc["MNC"] = networkinfo.mnc;
+    doc["LAC"] = networkinfo.lac;
+    doc["SCellID"] = networkinfo.cid;
+    doc["RSSNR"] = networkinfo.rssnr;
 
     String jsonString;
     serializeJson(doc, jsonString);
@@ -379,8 +376,7 @@ void sleep(int min)
 {
     // Set wakeup time to 10 minutes
     esp_sleep_enable_timer_wakeup(min * 60 * 1000000);
-
-    // // Go to sleep now
+    // Go to sleep now
     Serial.println("Going to sleep now");
     esp_deep_sleep_start();
 }
@@ -526,51 +522,51 @@ bool upload2FTP(String filename ,bool flag)
     return true;
 }
 
-
 void setup()
 {
     SerialMon.begin(115200);
     SerialAT.begin(UART_BAUD, SERIAL_8N1, PIN_RX, PIN_TX);
     pinMode(BAT_ADC, INPUT);
     delay(1000);
-
-    // deletelog(makefilename);
-    // deletelog("/config");
-
     modemPowerOn();
     delay(1000);
-    // connect2LTE();
-    // delay(1000);
-    // BLEDevice::init("");
-    // pClient = BLEDevice::createClient();
-    // connectToSensor(BLEAddress(MJ_ADDR));
-    // delay(5000);
-
-    // readBattlevel();
-    // delay(500);
-    // readlocation();
-    // delay(2000);
-    // readcellinfo();
-    // delay(2000);
-
-    // pClient->disconnect();
-    // delay(3000);
-
+    sendAT("ATE0",1000,1);
+    connect2LTE();
+    delay(1000);
+    BLEDevice::init("");
+    pClient = BLEDevice::createClient();
+    connectToSensor(BLEAddress(MJ_ADDR));
+    delay(5000);
+    readBattlevel();
+    delay(500);
+    readlocation();
+    delay(2000);
+    readcellinfo();
+    delay(2000);
+    pClient->disconnect();
+    delay(3000);
     // sendrequest();
-
-    // writelog(makefilename, makejson());
-    // delay(1000);
+    writelog(makefilename, makejson());
+    delay(1000);
     // readLog(makefilename);
     // delay(2000);
+    upload2FTP(makefilename,1);
+    delay(2000);
 
-    // upload2FTP(makefilename,1);
-    // delay(2000);
-
-    // modulePowerOff();
-    // sleep(15);
+    modulePowerOff();
+    sleep(30);
 }
 
 void loop()
 {
+//   while (true) {
+//     if (SerialAT.available()) {
+//       Serial.write(SerialAT.read());
+//     }
+//     if (Serial.available()) {
+//       SerialAT.write(Serial.read());
+//     }
+//     delay(1);
+//   }
   vTaskDelay(100 / portTICK_PERIOD_MS);
 }
