@@ -79,14 +79,11 @@ static BLEUUID charUUID("ebe0ccc1-7a0a-4b0c-8a1a-6ff2997da3a6");
 
 void decrypted(BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify)
 {
-    // tempandhumi.temp = (pData[0] | (pData[1] << 8)) * 0.01;
-    // tempandhumi.humi = pData[2];
-    Serial.printf("pData[0] = %x ",pData[0]);
-    Serial.printf("pData[1] = %x ",pData[1]);
-    Serial.println();
+    // Serial.printf("pData[0] = %x ",pData[0]);
+    // Serial.printf("pData[1] = %x ",pData[1]);
+    // Serial.println();
     int16_t tmp_data = (pData[0] | (pData[1] << 8));
     tempandhumi.temp = ((float)tmp_data*0.01);
-    // Serial.println("tempandhumi.temp = "+String(tempandhumi.temp));
     tempandhumi.humi = pData[2];
 }
 
@@ -106,7 +103,6 @@ void connectToSensor(BLEAddress pAddress)
         Serial.println(charUUID.toString().c_str());
         pClient->disconnect();
     }
-
     pRemoteCharacteristic->registerForNotify(decrypted);
 }
 
@@ -157,12 +153,11 @@ String sendAT(String _command, int interval, boolean _debug)
             _response += char(_read);
         }
     }
-
     SerialAT.flush();
-    if (_debug) {
-        SerialMon.print(_response);
+    if (_debug) 
+    {
+      SerialMon.print(_response);
     }
-
     return _response;
 }
 
@@ -508,7 +503,6 @@ bool upload2FTP(String filename ,bool flag)
     sprintf(ATcommand, "AT+CFTPSLOGIN=\"%s\",%d,\"%s\",\"%s\",%d", FTPS_ADDR, FTPS_PRT, FTPS_USRN,FTPS_PASS, FTPS_TYPE);
     // SerialMon.printf(at_login);
     sendAT(ATcommand, 6000, 1);
-
     // 6. Upload file
     filenameno = filename;
     filenameno.replace("/", "");
@@ -523,10 +517,8 @@ bool upload2FTP(String filename ,bool flag)
     }
     // 7. Log out FTPS
     sendAT("AT+CFTPSLOGOUT", 3000, 1);
-
     // 8. Stop FTPS
     sendAT("AT+CFTPSSTOP", 500, 1);
-
     // 9. Remove the uploaded file from drive E:
     memset(ATcommand, 0, sizeof(ATcommand));
     sprintf(ATcommand, "AT+FSDEL=%s", filename);
@@ -580,40 +572,5 @@ void setup()
 
 void loop()
 {
-//   connectToSensor(BLEAddress(MJ_ADDR));
-//   delay(5000);
-
-//   readBattlevel();
-//   delay(500);
-//   readlocation();
-//   delay(2000);
-//   readcellinfo();
-//   delay(2000);
-
-//   pClient->disconnect();
-//   delay(3000);
-
-//   // sendrequest();
-
-//   // writelog(makefilename, makejson());
-//   // delay(1000);
-//   // readLog(makefilename);
-//   // delay(2000);
-
-//   // upload2FTP(makefilename,1);
-//   // delay(2000);
-
-//   // modulePowerOff();
-//   // sleep(10);
-//   // delay(3000);
-  // vTaskDelay(1000/portTICK_PERIOD_MS);
-  // while (true) {
-  //   if (SerialAT.available()) {
-  //     Serial.write(SerialAT.read());
-  //   }
-  //   if (Serial.available()) {
-  //     SerialAT.write(Serial.read());
-  //   }
-  //   delay(1);
-  // }
+  vTaskDelay(100 / portTICK_PERIOD_MS);
 }
