@@ -18,17 +18,27 @@
 #define PIN_SUP 12
 #define BAT_ADC 35
 
-#define MJ_ADDR "A4:C1:38:54:6E:F2"
+// #define MJ_ADDR "A4:C1:38:54:6E:F2"
 #define apiKey (String) "pk.71031a62fba9814c0898ae766b971df1"
 
 #define FTPS_ADDR               "188.166.217.51"
 #define FTPS_PRT                7021
-#define FTPS_PATH               "/DEV/" // "/BER/" 
+#define FTPS_LOG_PATH           "/DEV/Log/" // "/BER/" 
+// #define FTPS_CONF_PATH          "/DEV/Config/"
 #define FTPS_USRN               "tung"
 #define FTPS_PASS               "anundaJJ795"
 #define FTPS_TYPE               1
+// #define CONF_FNAME              "ble_config.json"
+
+// Sensor config
+#define CONF_ADDR               "161.246.35.199"
+#define CONF_PRT                80
+#define CONF_FULL_FNAME         "/~tung/Frozen_Proj/Config/sensor_config.json"
+
+
 String makefilename;
-String filenameno;
+
+String mijia_list[] = {"A4:C1:38:54:6E:F2","A4:C1:38:A9:4B:B3","A4:C1:38:24:27:29","A4:C1:38:1D:F5:24","A4:C1:38:30:D3:A3","A4:C1:38:EF:1C:30"};
 
 TinyGsmSim7600 modem(SerialAT);
 TinyGsmSim7600::GsmClientSim7600 client(modem);
@@ -38,6 +48,11 @@ struct SENSOR_DATA {
     String temp; // Use 3
     String humi; // Use 4
 };
+
+// struct SENSOR_DATA {
+//     float temp; // Use 3
+//     float humi; // Use 4
+// };
 
 SENSOR_DATA tempandhumi;
 
@@ -80,27 +95,38 @@ static BLEUUID charUUID("ebe0ccc1-7a0a-4b0c-8a1a-6ff2997da3a6");
 void decrypted(BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify)
 {
     int16_t tmp_data = (pData[0] | (pData[1] << 8));
+    // tempandhumi.temp = ((float)tmp_data*0.01);
+    // tempandhumi.humi = pData[2];
     tempandhumi.temp = ((float)tmp_data*0.01);
-    tempandhumi.humi = pData[2];
+    tempandhumi.humi = (float)pData[2];
 }
 
 void connectToSensor(BLEAddress pAddress)
 {
+    pClient = BLEDevice::createClient();
     pClient->connect(pAddress);
-    BLERemoteService* pRemoteService = pClient->getService(serviceUUID);
-    if (pRemoteService == nullptr) {
-        Serial.print("Failed to find our service UUID: ");
-        Serial.println(serviceUUID.toString().c_str());
-        pClient->disconnect();
-    }
+    // delay(3000);
+    if (pClient->isConnected())
+    {
+        BLERemoteService* pRemoteService = pClient->getService(serviceUUID);
+        if (pRemoteService == nullptr) {
+            Serial.print("Failed to find our service UUID: ");
+            Serial.println(serviceUUID.toString().c_str());
+            pClient->disconnect();
+        }
 
-    BLERemoteCharacteristic* pRemoteCharacteristic = pRemoteService->getCharacteristic(charUUID);
-    if (pRemoteCharacteristic == nullptr) {
-        Serial.print("Failed to find our characteristic UUID: ");
-        Serial.println(charUUID.toString().c_str());
+        BLERemoteCharacteristic* pRemoteCharacteristic = pRemoteService->getCharacteristic(charUUID);
+        if (pRemoteCharacteristic == nullptr) {
+            Serial.print("Failed to find our characteristic UUID: ");
+            Serial.println(charUUID.toString().c_str());
+            pClient->disconnect();
+        }
+        pRemoteCharacteristic->registerForNotify(decrypted); // Call decrypt here
+        delay(5000); //(5000)
         pClient->disconnect();
+        delay(1000); // (2000)
     }
-    pRemoteCharacteristic->registerForNotify(decrypted);
+    delete pClient; // https://github.com/espressif/arduino-esp32/issues/3335
 }
 
 void modemPowerOn()
@@ -313,6 +339,31 @@ void readcellinfo()
     networkinfo.cid = values[4];
 }
 
+// String makejson()
+// {
+//     const size_t bufferSize = JSON_OBJECT_SIZE(13) + 100; //JSON_OBJECT_SIZE(6) + JSON_OBJECT_SIZE(4) + 100;
+//     DynamicJsonDocument doc(bufferSize);
+
+//     doc["Date"] = networkinfo.date;
+//     doc["Time"] = networkinfo.time;
+//     doc["Batt_V"] = battinfo.batt_volt;
+//     doc["Batt_Lev"] = battinfo.batt_level;
+//     doc["Temp"] = tempandhumi.temp;
+//     doc["Humi"] = tempandhumi.humi;
+//     doc["Lat"] = networkinfo.lat;
+//     doc["Lon"] = networkinfo.lon;
+//     doc["MCC"] = networkinfo.mcc;
+//     doc["MNC"] = networkinfo.mnc;
+//     doc["LAC"] = networkinfo.lac;
+//     doc["SCellID"] = networkinfo.cid;
+//     doc["RSSNR"] = networkinfo.rssnr;
+
+//     String jsonString;
+//     serializeJson(doc, jsonString);
+//     SerialMon.println(jsonString);
+//     return jsonString;
+// }
+
 String makejson()
 {
     const size_t bufferSize = JSON_OBJECT_SIZE(13) + 100; //JSON_OBJECT_SIZE(6) + JSON_OBJECT_SIZE(4) + 100;
@@ -432,7 +483,102 @@ void sendrequest()
     Serial.println("Longitude: " + lon);
 }
 
-bool upload2FTP(String filename ,bool flag)
+String getConfig(char* _conf_addr, uint16_t _conf_prt, char* _conf_full_fname)
+{
+    String _config = "No data";
+    if (!client.connect(_conf_addr, 80)) 
+    {
+        SerialMon.println(" fail");
+        // delay(10000);
+        return _config;
+    }
+    SerialMon.println(" OK");
+
+    // Make a HTTP GET request:
+    client.print(String("GET ") + String(_conf_full_fname) + " HTTP/1.1\r\n");
+    client.print(String("Host: ") + String(_conf_addr) + "\r\n\r\n\r\n\r\n");
+    client.print("Connection: close\r\n\r\n\r\n\r\n");
+
+    long timeout = millis();
+    while (client.available() == 0) {
+        if (millis() - timeout > 5000L) {
+        SerialMon.println(F(">>> Client Timeout !"));
+        client.stop();
+        }
+    }
+    // Grep the content length
+    uint32_t contentLength = 0;
+    while (client.connected()) 
+    {
+        String line = client.readStringUntil('\n');
+        line.trim();
+        SerialMon.println(line);    // Uncomment this to show response header
+        line.toLowerCase();
+        if (line.startsWith("content-length:")) 
+        {
+            contentLength = line.substring(line.lastIndexOf(':') + 1).toInt();
+        } 
+        else if (line.length() == 0) 
+        {
+            break;
+        }
+    }
+    while (client.available())
+    {
+        String _tmp_str = client.readStringUntil('\n');
+        if (_tmp_str.startsWith("{"))
+        {
+            _config = _tmp_str.substring(0,contentLength);
+        }
+    }
+    return _config;
+} 
+
+// String getSensorID(char* _dev_id, String _json_str) // Code from https://arduinojson.org/v6/assistant/#/step4
+// {
+//     String _output;
+//     StaticJsonDocument<384> doc;
+
+//     DeserializationError error = deserializeJson(doc, _json_str);
+
+//     if (error) {
+//     Serial.print(F("deserializeJson() failed: "));
+//     Serial.println(error.f_str());
+//     _output = "";
+//     return _output;
+//     }
+//     uint8_t config_index = doc["config"].size();
+//     for (uint8_t _conf_id = 0; _conf_id < config_index; _conf_id++)
+//     {
+//       // if (doc["config"][_conf_id].containsKey("dev_id"))
+//       // {
+//       //   char* data = doc["config"][_conf_id]["dev_id"];
+//       //   Serial.println(String(data));
+//       // }
+//       if (doc["config"][_conf_id].containsKey("dev_id"))
+//       {
+//         char* data = doc["config"][_conf_id]["dev_id"];
+//         Serial.printf("data is %s",data);
+//       }
+//     }
+//     // const char* config_0_dev_id = doc["config"][0]["dev_id"]; // "froz0001"
+//     // Serial.println("doc[\"config\"].size() = " + String(doc["config"].size()));
+
+//     // JsonArray config_0_target = doc["config"][0]["target"];
+//     // const char* config_0_target_0 = config_0_target[0]; // "A4:C1:38:54:6E:F2"
+//     // const char* config_0_target_1 = config_0_target[1]; // "A4:C1:38:A9:4B:B3"
+//     // const char* config_0_target_2 = config_0_target[2]; // "A4:C1:38:24:27:29"
+//     // const char* config_0_target_3 = config_0_target[3]; // "A4:C1:38:1D:F5:24"
+
+//     // const char* config_1_dev_id = doc["config"][1]["dev_id"]; // "froz0002"
+
+//     // const char* config_1_target_0 = doc["config"][1]["target"][0]; // "A4:C1:38:30:D3:A3"
+//     // const char* config_1_target_1 = doc["config"][1]["target"][1]; // "A4:C1:38:EF:1C:30"
+
+//     return _output;
+// }
+
+bool upload2FTP(char* _FTPS_ADDR, char* _FTPS_PRT, char* _FTPS_USRN, char* _FTPS_PASS, char* _FTPS_TYPE, char* _FTPS_LOG_PATH, String _filename)
 {
     char ATcommand[60];
     SPIFFS.begin();
@@ -445,13 +591,13 @@ bool upload2FTP(String filename ,bool flag)
         return false;
     }
 
-    if (!SPIFFS.exists(filename))
+    if (!SPIFFS.exists(_filename))
     {
-        SerialMon.println(String(filename) + " is not existed in SPIFFS.");
+        SerialMon.println(String(_filename) + " is not existed in SPIFFS.");
         return false;
     }
 
-    File fileToRead = SPIFFS.open(filename, "r");
+    File fileToRead = SPIFFS.open(_filename, "r");
         if (!fileToRead)
     {
         SerialMon.printf("Failed to open file for reading \r\n");
@@ -468,7 +614,7 @@ bool upload2FTP(String filename ,bool flag)
 
     //3. Move file from SPIFFS to drive E: of sim7600
     memset(ATcommand, 0, sizeof(ATcommand));
-    sprintf(ATcommand, "AT+CFTRANRX=\"C:%s\",%d", filename, file_len);
+    sprintf(ATcommand, "AT+CFTRANRX=\"C:%s\",%d", _filename, file_len);
     String writefile_response = sendAT(ATcommand, 5000, 1);
     SerialMon.println(" writefile_response is " +  writefile_response);
     while (fileToRead.available())
@@ -496,14 +642,14 @@ bool upload2FTP(String filename ,bool flag)
     // 5. Start FTPS session, then login
     sendAT("AT+CFTPSSTART", 500, 1);
     memset(ATcommand, 0, sizeof(ATcommand));
-    sprintf(ATcommand, "AT+CFTPSLOGIN=\"%s\",%d,\"%s\",\"%s\",%d", FTPS_ADDR, FTPS_PRT, FTPS_USRN,FTPS_PASS, FTPS_TYPE);
+    sprintf(ATcommand, "AT+CFTPSLOGIN=\"%s\",%d,\"%s\",\"%s\",%d", _FTPS_ADDR, _FTPS_PRT, _FTPS_USRN,_FTPS_PASS, _FTPS_TYPE);
     // SerialMon.printf(at_login);
     sendAT(ATcommand, 6000, 1);
     // 6. Upload file
-    filenameno = filename;
+    String filenameno = _filename;
     filenameno.replace("/", "");
     memset(ATcommand, 0, sizeof(ATcommand));
-    sprintf(ATcommand, "AT+CFTPSPUTFILE=\"%s\",1", String(FTPS_PATH) +String(filenameno));
+    sprintf(ATcommand, "AT+CFTPSPUTFILE=\"%s\",1", String(_FTPS_LOG_PATH) +String(filenameno));
     String response_uploadfile = sendAT(ATcommand, 20000, 1);
     SerialAT.flush();
     if (response_uploadfile.indexOf("+CFTPSPUTFILE: 0") != -1) {
@@ -517,9 +663,42 @@ bool upload2FTP(String filename ,bool flag)
     sendAT("AT+CFTPSSTOP", 500, 1);
     // 9. Remove the uploaded file from drive E:
     memset(ATcommand, 0, sizeof(ATcommand));
-    sprintf(ATcommand, "AT+FSDEL=%s", filename);
+    sprintf(ATcommand, "AT+FSDEL=%s", _filename);
     sendAT(ATcommand, 2000, 1);
     return true;
+}
+
+void logCreate()
+{
+    // StaticJsonDocument<384> doc;
+
+    // doc["Dev_id"] = "froz0001";
+    // doc["Date"] = "2023/03/08";
+    // doc["Time"] = "04:11:14";
+    // doc["Batt_Lev"] = "100.0";
+
+    // JsonObject Sensor = doc.createNestedObject("Sensor");
+
+    // JsonObject Sensor_A4_C1_38_54_6E_F2 = Sensor.createNestedObject("A4:C1:38:54:6E:F2");
+    // Sensor_A4_C1_38_54_6E_F2["Temp"] = "25.4";
+    // Sensor_A4_C1_38_54_6E_F2["Humi"] = "60.0";
+
+    // JsonObject Sensor_A4_C1_38_A9_4B_B3 = Sensor.createNestedObject("A4:C1:38:A9:4B:B3");
+    // Sensor_A4_C1_38_A9_4B_B3["Temp"] = "25.6";
+    // Sensor_A4_C1_38_A9_4B_B3["Humi"] = "57.0";
+
+    // JsonObject Location = doc.createNestedObject("Location");
+    // Location["Lat"] = "13.751798";
+    // Location["Lon"] = "100.595377";
+
+    // JsonObject Network = doc.createNestedObject("Network");
+    // Network["MCC"] = "520";
+    // Network["MNC"] = "03";
+    // Network["LAC"] = "824";
+    // Network["SCellID"] = "157455461";
+    // Network["RSSNR"] = "12";
+
+    // serializeJson(doc, output);
 }
 
 void setup()
@@ -532,29 +711,46 @@ void setup()
     delay(1000);
     sendAT("ATE0",1000,1);
     connect2LTE();
-    delay(1000);
-    BLEDevice::init("");
-    pClient = BLEDevice::createClient();
-    connectToSensor(BLEAddress(MJ_ADDR));
-    delay(5000);
-    readBattlevel();
-    delay(500);
-    readlocation();
-    delay(2000);
-    readcellinfo();
-    delay(2000);
-    pClient->disconnect();
     delay(3000);
-    // sendrequest();
-    writelog(makefilename, makejson());
-    delay(1000);
-    // readLog(makefilename);
-    // delay(2000);
-    upload2FTP(makefilename,1);
-    delay(2000);
+    BLEDevice::init("");
+    for (uint8_t mi_i=0; mi_i < sizeof(mijia_list)/sizeof(mijia_list[0]); mi_i++)
+    {
+        // connectToSensor(BLEAddress(mijia_list[mi_i].c_str()));
+        // Serial.println("sensor mac = "+mijia_list[mi_i]+", temperature = "+String(tempandhumi.temp,1)+" C., humidity = "+String(tempandhumi.humi,1)+"%.");
+        connectToSensor(BLEAddress(mijia_list[mi_i].c_str()));
+        Serial.println("sensor mac = "+mijia_list[mi_i]+", temperature = "+tempandhumi.temp+" C., humidity = "+tempandhumi.humi+"%.");
+    }
+    // pClient = BLEDevice::createClient();
 
-    modulePowerOff();
-    sleep(30);
+    // connectToSensor(BLEAddress(mijia_list[mi_i]));
+    
+    // delay(5000);
+    // readBattlevel();
+    // delay(500);
+    // readlocation();
+    // delay(2000);
+    // readcellinfo();
+    // delay(2000);
+    // pClient->disconnect();
+
+    // delay(3000);
+    // // sendrequest();
+    // writelog(makefilename, makejson());
+    // delay(1000);
+    // // readLog(makefilename);
+    // // delay(2000);
+    // upload2FTP(makefilename);
+    // delay(2000);
+
+    // modulePowerOff();
+    // sleep(30);
+    // updateTarget(char* _FTPS_ADDR,  _FTPS_PRT, char* _FTPS_USRN, char* _FTPS_PASS, char* _FTPS_TYPE, char* _FTPS_CONF_PATH, char* _filename)
+    // String res_download = updateTarget(FTPS_ADDR,FTPS_PRT,FTPS_USRN,FTPS_PASS,FTPS_TYPE,FTPS_CONF_PATH,CONF_FNAME);
+    // Serial.println("res_download = "+res_download);
+    // String sensor_id = getSensorID(config);
+    // String config = getConfig(CONF_ADDR, CONF_PRT, CONF_FULL_FNAME);
+    // Serial.println("config = " + config);
+    // delay(1000);
 }
 
 void loop()
@@ -568,5 +764,5 @@ void loop()
 //     }
 //     delay(1);
 //   }
-  vTaskDelay(100 / portTICK_PERIOD_MS);
+//   vTaskDelay(100 / portTICK_PERIOD_MS);
 }
