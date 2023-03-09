@@ -17,6 +17,7 @@
 #define PIN_RST 5
 #define PIN_SUP 12
 #define BAT_ADC 35
+#define SLEEP_DEFAULT_MINUTE    10       
 
 // #define MJ_ADDR "A4:C1:38:54:6E:F2"
 #define apiKey (String) "pk.71031a62fba9814c0898ae766b971df1"
@@ -57,11 +58,6 @@ struct SENSOR_DATA {
     String temp; // Use 3
     String humi; // Use 4
 };
-
-// struct SENSOR_DATA {
-//     float temp; // Use 3
-//     float humi; // Use 4
-// };
 
 SENSOR_DATA tempandhumi;
 
@@ -694,8 +690,8 @@ void sendrequest()
     String lon = response.substring(startIndex, endIndex);
     networkinfo.lat = lat;
     networkinfo.lon = lon;
-    // Serial.println("Latitude: " + lat);
-    // Serial.println("Longitude: " + lon);
+    Serial.println("Latitude: " + lat);
+    Serial.println("Longitude: " + lon);
 }
 
 String getConfig(char* _conf_addr, uint16_t _conf_prt, char* _conf_full_fname)
@@ -748,7 +744,7 @@ String getConfig(char* _conf_addr, uint16_t _conf_prt, char* _conf_full_fname)
     return _config;
 } 
 
-String* getSensorID(char* _dev_id, String _json_str, uint8_t* _sensor_num) // Code from https://arduinojson.org/v6/assistant/#/step4
+String* getSensorID(char* _dev_id, String _json_str, uint8_t* _sensor_num, uint8_t* _sleep_minutes) // Code from https://arduinojson.org/v6/assistant/#/step4
 {
     String* _output;
     StaticJsonDocument<500> doc;
@@ -763,6 +759,7 @@ String* getSensorID(char* _dev_id, String _json_str, uint8_t* _sensor_num) // Co
     uint8_t config_index = doc["config"].size();
     for (uint8_t _conf_id = 0; _conf_id < config_index; _conf_id++)
     {
+      Serial.println("_conf_id = "+String(_conf_id));
       if (doc["config"][_conf_id].containsKey("dev_id"))
       {
         const char* data = doc["config"][_conf_id]["dev_id"];
@@ -772,18 +769,25 @@ String* getSensorID(char* _dev_id, String _json_str, uint8_t* _sensor_num) // Co
           {
             uint8_t target_num = doc["config"][_conf_id]["target"].size();
             *_sensor_num = target_num;
+            Serial.println("target_num = "+String(target_num));
             String* _tmp_str = new String[target_num];
+            Serial.println("size of xx is "+String(sizeof(_tmp_str)));
             for (uint8_t _tg_id=0; _tg_id<target_num; _tg_id++)
             {
               const char* tgi = doc["config"][_conf_id]["target"][_tg_id];
               _tmp_str[_tg_id] = (String(tgi));
             }
-            return _tmp_str;
+            _output = _tmp_str;
+          }
+          if (doc["config"][_conf_id].containsKey("sleep_minutes"))
+          {
+            *_sleep_minutes = atoi(doc["config"][_conf_id]["sleep_minutes"]);
           }
           break;
         }
       }
     }
+    return _output;
 }
 
 bool upload2FTP(char* _FTPS_ADDR, char* _FTPS_PRT, char* _FTPS_USRN, char* _FTPS_PASS, char* _FTPS_TYPE, char* _FTPS_LOG_PATH, String _filename)
@@ -921,11 +925,11 @@ void setup()
     connect2LTE();
     delay(1000);
 
-    uint8_t sensor_num = 0;
+    uint8_t sensor_num = 0; uint8_t sleep_minutes = 0;
     String res_config = getConfig(CONF_ADDR,CONF_PRT,CONF_FULL_FNAME);
     if (res_config != "No data")
     {
-        String* mi_list = getSensorID(DEV_ID,res_config, &sensor_num);
+        String* mi_list = getSensorID(DEV_ID,res_config, &sensor_num, &sleep_minutes);
         Serial.println("sensor_num is "+String(sensor_num));
         delay(1000);
         BLEDevice::init("");
@@ -975,27 +979,27 @@ void setup()
     // upload2FTP(makefilename);
     // delay(2000);
 
-    // modulePowerOff();
-    // sleep(30);
-    // updateTarget(char* _FTPS_ADDR,  _FTPS_PRT, char* _FTPS_USRN, char* _FTPS_PASS, char* _FTPS_TYPE, char* _FTPS_CONF_PATH, char* _filename)
-    // String res_download = updateTarget(FTPS_ADDR,FTPS_PRT,FTPS_USRN,FTPS_PASS,FTPS_TYPE,FTPS_CONF_PATH,CONF_FNAME);
-    // Serial.println("res_download = "+res_download);
-    // String sensor_id = getSensorID(config);
-    // String config = getConfig(CONF_ADDR, CONF_PRT, CONF_FULL_FNAME);
-    // Serial.println("config = " + config);
-    // delay(1000);
+    modulePowerOff();
+    if (sleep_minutes != 0)  
+    {
+        sleep(sleep_minutes);
+    }
+    else
+    {
+        sleep(SLEEP_DEFAULT_MINUTE);
+    }
 }
 
 void loop()
 {
-  while (true) {
-    if (SerialAT.available()) {
-      Serial.write(SerialAT.read());
-    }
-    if (Serial.available()) {
-      SerialAT.write(Serial.read());
-    }
-    delay(1);
-  }
+//   while (true) {
+//     if (SerialAT.available()) {
+//       Serial.write(SerialAT.read());
+//     }
+//     if (Serial.available()) {
+//       SerialAT.write(Serial.read());
+//     }
+//     delay(1);
+//   }
 //   vTaskDelay(100 / portTICK_PERIOD_MS);
 }
