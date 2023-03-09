@@ -142,6 +142,23 @@ void modemPowerOn()
     digitalWrite(PWR_PIN, LOW);
 }
 
+void moduleOff()
+{
+    String _res_shutdown = sendAT("AT+CPOF", 9000, 0);
+    digitalWrite(12, LOW);
+    Serial.println("_res_shutdown = " + _res_shutdown);
+}
+
+void modulePowerOff()
+{
+    digitalWrite(4, HIGH);
+    delay(3000);
+    digitalWrite(4, LOW);
+    delay(3000);
+    digitalWrite(4, HIGH);
+    digitalWrite(12, LOW);
+}
+
 BATT_INFO readBattInfo()
 {
     BATT_INFO _batt_info;
@@ -401,9 +418,6 @@ void listAllFile()
 bool writelog(String _filename, String _data2write)
 {
     char mode[5];
-    // SPIFFS.begin(true);
-    // if (!_filename.startsWith("/")) _filename = "/"+ _filename;
-
     Serial.println("_filename is "+_filename);
     // 1. Mount SPIFFS
     if (!SPIFFS.begin()) {
@@ -435,13 +449,11 @@ bool writelog(String _filename, String _data2write)
     }
     Serial.printf("save mode is %s\r\n",mode);
     delay(100);
-    // SerialMon.println("Mode is " + String(mode));
     SerialMon.print("\n");
     // 4. Open file and write data
     Serial.println("open log to save");
     Serial.println("_filename is "+_filename);
     delay(1000);
-    // if (_filename.startsWith("/")) _filename.replace("/","");
     File file = SPIFFS.open(_filename, mode);
     file.println(_data2write); // Write file and count the written bytes.
     // 5. Close file
@@ -525,23 +537,6 @@ void sleep(int min)
     // Go to sleep now
     Serial.println("Going to sleep now");
     esp_deep_sleep_start();
-}
-
-void moduleOff()
-{
-    String _res_shutdown = sendAT("AT+CPOF", 9000, 0);
-    digitalWrite(12, LOW);
-    Serial.println("_res_shutdown = " + _res_shutdown);
-}
-
-void modulePowerOff()
-{
-    digitalWrite(4, HIGH);
-    delay(3000);
-    digitalWrite(4, LOW);
-    delay(3000);
-    digitalWrite(4, HIGH);
-    digitalWrite(12, LOW);
 }
 
 LOCATION_INFO sendrequest()
@@ -851,12 +846,10 @@ void setup()
     Serial.println("js_log_str is "+js_log_str);
 
     // 8. Create log filename and save
-    // char log_fname_ch[30]
     String log_filename = String("/") + DEV_ID + String("_") + String(getDOY(rtc_info.date, "/")) + ".log";
     Serial.println("log_filename is "+log_filename);
     writelog(log_filename, js_log_str);
     delay(1000);
-    // readLog(log_filename);
     delay(2000);
     upload2FTP(FTPS_ADDR,FTPS_PRT,FTPS_USRN,FTPS_PASS,FTPS_TYPE,FTPS_LOG_PATH,log_filename);
     delay(2000);
@@ -883,5 +876,4 @@ void loop()
 //     }
 //     delay(1);
 //   }
-//   vTaskDelay(100 / portTICK_PERIOD_MS);
 }
