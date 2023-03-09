@@ -34,15 +34,24 @@
 #define CONF_ADDR               "161.246.35.199"
 #define CONF_PRT                80
 #define CONF_FULL_FNAME         "/~tung/Frozen_Proj/Config/sensor_config.json"
+#define DEV_ID                  "froz0001"
 
 
 String makefilename;
-
+String json_str = "{\"config\":[{\"dev_id\":\"froz0001\",\"target\":[\"A4:C1:38:54:6E:F2\",\"A4:C1:38:A9:4B:B3\",\"A4:C1:38:24:27:29\",\"A4:C1:38:1D:F5:24\",\"A4:C1:38:30:D3:A3\",\"A4:C1:38:EF:1C:30\"]},{\"dev_id\":\"froz0002\",\"target\":[\"A4:C1:38:30:D3:A3\",\"A4:C1:38:EF:1C:30\"]}]}";
 String mijia_list[] = {"A4:C1:38:54:6E:F2","A4:C1:38:A9:4B:B3","A4:C1:38:24:27:29","A4:C1:38:1D:F5:24","A4:C1:38:30:D3:A3","A4:C1:38:EF:1C:30"};
 
 TinyGsmSim7600 modem(SerialAT);
 TinyGsmSim7600::GsmClientSim7600 client(modem);
+
 BLEClient* pClient;
+
+struct RTC_INFO
+{
+    String date ="";
+    String time ="";
+};
+RTC_INFO rtc_info;
 
 struct SENSOR_DATA {
     String temp; // Use 3
@@ -95,8 +104,6 @@ static BLEUUID charUUID("ebe0ccc1-7a0a-4b0c-8a1a-6ff2997da3a6");
 void decrypted(BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify)
 {
     int16_t tmp_data = (pData[0] | (pData[1] << 8));
-    // tempandhumi.temp = ((float)tmp_data*0.01);
-    // tempandhumi.humi = pData[2];
     tempandhumi.temp = ((float)tmp_data*0.01);
     tempandhumi.humi = (float)pData[2];
 }
@@ -105,7 +112,7 @@ void connectToSensor(BLEAddress pAddress)
 {
     pClient = BLEDevice::createClient();
     pClient->connect(pAddress);
-    // delay(3000);
+    delay(200);
     if (pClient->isConnected())
     {
         BLERemoteService* pRemoteService = pClient->getService(serviceUUID);
@@ -208,6 +215,183 @@ void connect2LTE()
     //<result_type>,<num_pkts_sent>,<num_pkts_recvd>,<num_pkts_lost>,<min_rtt>,<max_rtt>, < avg_rtt>
 }
 
+RTC_INFO getRTC()
+{
+    RTC_INFO _res_rtc_info;
+    // Before use AT, you must take AT+CTZU=1 to set automaticaly timezone update!!
+    String _res_rtc = sendAT("AT+CCLK?",3000,1);
+    uint8_t _res_head_idx = _res_rtc.indexOf("+CCLK: \"");
+    String _date = _res_rtc.substring(_res_head_idx+sizeof("+CCLK: \"")-1,_res_head_idx+sizeof("+CCLK: \"")+7);
+    String _time = _res_rtc.substring(_res_head_idx+sizeof("+CCLK: \"")+8,_res_head_idx+sizeof("+CCLK: \"")+16);
+    String _dz = _res_rtc.substring(_res_head_idx+sizeof("+CCLK: \"")+16,_res_head_idx+sizeof("+CCLK: \"")+19);
+
+    int8_t _offset_h = atoi(_dz.c_str())/4;
+
+    int colonIndex = 0;
+    int lastColonIndex = 0;
+    String tmp_time[3];
+    for (int i = 0; i < 3; i++) 
+    {
+        colonIndex = _time.indexOf(':', lastColonIndex);
+        String temp = _time.substring(lastColonIndex, colonIndex);
+        tmp_time[i] = temp;
+        lastColonIndex = colonIndex + 1;
+    }
+    int8_t _hh = atoi(tmp_time[0].c_str());
+    int8_t _MM = atoi(tmp_time[1].c_str());
+    int8_t _ss = atoi(tmp_time[2].c_str());
+    int _sod = _hh*3600 + _MM*60 + _ss; 
+
+    int commaIndex = 0;
+    int lastCommaIndex = 0;
+    String values[3];
+    for (int i = 0; i < 3; i++) 
+    {
+        commaIndex = _date.indexOf('/', lastCommaIndex);
+        String temp = _date.substring(lastCommaIndex, commaIndex);
+        values[i] = temp;
+        lastCommaIndex = commaIndex + 1;
+    }
+    int8_t _yy = atoi(values[0].c_str());
+    int8_t _mm = atoi(values[1].c_str());
+    int8_t _dd = atoi(values[2].c_str());
+
+    if (strcmp(_dz.c_str(),"+00") == 0) return _res_rtc_info;
+    _sod = _sod - (3600*_offset_h);
+    if (_offset_h > 0) // Local is faster than UTC
+    {
+        if (_sod < 0)
+        {
+            _sod = 86400 + _sod;
+            if (_dd > 1) 
+            {
+                _dd = _dd - 1;
+            }
+            else if (_dd == 1)
+            {
+                if (_mm == 1)
+                {
+                    _mm = 12;
+                    _yy = _yy - 1;
+                    _dd = 31;
+                }
+                else
+                {
+                    if ((_mm == 5) || (_mm == 7) || (_mm == 10) || (_mm == 12) )
+                    {
+                        _dd = 30;
+                    }
+                    else if (_mm == 3)
+                    {
+                        ((_yy%4) == 0)? _dd = 29 : _dd = 28;
+                    }
+                    else
+                    {
+                        _dd = 31;
+                    }
+                    _mm = _mm - 1;
+                }
+            }
+        }
+    }
+    else if (_offset_h < 0) // Local is slower than UTC
+    {
+        if (_sod > 86400)
+        {
+            _sod = _sod - 86400;
+            if (_mm == 12)
+            {
+                if (_dd == 31)
+                {
+                    _dd = 1;
+                    _mm = 1;
+                    _yy += 1;
+                }
+                else
+                {
+                    _dd += 1;
+                }
+            }
+            else if(_mm == 2)
+            {
+                if ((_yy%4) == 0)
+                {
+                    if (_dd > 28)
+                    {
+                        _mm = 3;
+                        _dd = 1;
+                    }
+                    else
+                    {
+                        _dd += 1;
+                    }
+                }
+                else
+                {
+                    if (_dd == 28)
+                    {
+                        _mm = 3;
+                        _dd = 1;
+                    }
+                    else
+                    {
+                        _dd += 1;
+                    }
+                }
+            }
+            else if ((_mm == 1) || (_mm == 3) || (_mm == 5) || (_mm == 7) || (_mm == 8) || (_mm == 10))
+            {
+                if (_dd == 31)
+                {
+                    _dd = 1;
+                }
+                else
+                {
+                    _dd += 1;
+                }
+                _mm += 1;
+            }
+            else if ((_mm == 4) || (_mm == 6) || (_mm == 9) || (_mm == 11))
+            {
+                if (_dd == 30)
+                {
+                    _dd == 1;
+                }
+                else
+                {
+                    _dd += 1;
+                }
+                _mm += 1;
+            }
+        }
+    }
+    _hh = _sod/3600;
+    _MM = (_sod/60) - (60*_hh);
+    _ss = _sod - (3600*_hh + 60*_MM);
+    String _utc_fm_str = "";
+    (String(_hh).length() < 2)? _utc_fm_str+="0%d" : _utc_fm_str+="%d";
+    _utc_fm_str+=":";
+    (String(_MM).length() < 2)? _utc_fm_str+="0%d" : _utc_fm_str+="%d";
+    _utc_fm_str+=":";
+    (String(_ss).length() < 2)? _utc_fm_str+="0%d" : _utc_fm_str+="%d";
+
+    String _date_fm_str = "20"; // The current century
+    (String(_yy).length() < 2)? _date_fm_str+="0%d" : _date_fm_str+="%d";
+    _date_fm_str+="/";
+    (String(_mm).length() < 2)? _date_fm_str+="0%d" : _date_fm_str+="%d";
+    _date_fm_str+="/";
+    (String(_dd).length() < 2)? _date_fm_str+="0%d" : _date_fm_str+="%d";  
+
+    char _o_date[12]; char _o_utc[10];  memset(&_o_date,0,sizeof(_o_date)); memset(&_o_utc,0,sizeof(_o_utc));
+
+    sprintf(_o_date,_date_fm_str.c_str(),_yy,_mm,_dd);
+    sprintf(_o_utc,_utc_fm_str.c_str(),_hh,_MM,_ss);
+
+    _res_rtc_info.date = String(_o_date);
+    _res_rtc_info.time = String(_o_utc);
+    return _res_rtc_info;
+}
+
 void listAllFile()
 {
     if (!SPIFFS.begin(true)) {
@@ -250,7 +434,7 @@ bool writelog(String filename, String data2write)
         ESP.restart();
         return false;
     }
-    listAllFile();
+    // listAllFile();
     // 3. Check file exist
     if (!SPIFFS.exists(filename)) {
         sprintf(mode, "w"); // If file is not exist, write i w mode
@@ -273,38 +457,60 @@ bool writelog(String filename, String data2write)
 
 String readlocation()
 {
+    String _makefilename = "";
     String sentence = sendAT("AT+CLBS=4", 10000, 1);
-    writelog("/config", sentence);
-    //  +CLBS: 0,13.620110,100.662918,550,2023/01/30,13:39:11
-    //  response :<locationcode>,<longitude>,<latitude>,<acc>,<date>,<time>
-    int startIndex = sentence.indexOf("+CLBS: ");
-    sentence = sentence.substring(startIndex + 7, startIndex + 55);
-    sentence.replace("\r", "");
-    sentence.replace("\n", "");
-    sentence.replace("AT+CLBS=4ERROR", "");
-    sentence.replace("AT+CPSI?+CPSI: NO SERVICE", "");
-    // SerialMon.println("Location = "+sentence);
-    int commaIndex = 0;
-    int lastCommaIndex = 0;
-    String values[6];
-    for (int i = 0; i < 6; i++) {
-        commaIndex = sentence.indexOf(',', lastCommaIndex);
-        String temp = sentence.substring(lastCommaIndex, commaIndex);
-        values[i] = temp;
-        lastCommaIndex = commaIndex + 1;
-        networkinfo.lat = values[1];
-        networkinfo.lon = values[2];
+    if(sentence.indexOf("ERROR") != -1) // If CLBS time unavailable, get from RTC instead
+    {
+      String YY = ""; String DD = "";
+      rtc_info = getRTC();
+      SerialMon.println("rtc_info.date is "+rtc_info.date);
+      SerialMon.println("rtc_info.time is "+rtc_info.time);
+      if ((rtc_info.date == "") || (rtc_info.time == "")) return _makefilename;
+      String tmp_date[3]; String tmp_utc[3];
+      int slashIndex = 0;
+      int lastslashIndex = 0;
+      for (int i = 0; i < 3; i++) 
+      {
+          slashIndex = rtc_info.date.indexOf('/', lastslashIndex);
+          String temp = rtc_info.date.substring(lastslashIndex, slashIndex);
+          tmp_date[i] = temp;
+          lastslashIndex = slashIndex + 1;
+      }
+      YY = String(tmp_date[0].toInt() - 100*int(tmp_date[0].toInt()/100));
+      DD = tmp_date[2];
+      _makefilename = "/"+DD+YY+".txt";
+      networkinfo.date = rtc_info.date;
+      networkinfo.time = rtc_info.time;
     }
-    int startIndexdate = sentence.indexOf("2023/");
-    networkinfo.date = sentence.substring(startIndexdate, startIndexdate + 10);
-    networkinfo.time = sentence.substring(startIndexdate + 11, startIndexdate + 19);
-    String name = sentence.substring(startIndexdate + 5, startIndexdate + 7)+sentence.substring(startIndexdate+7, startIndexdate + 10);
-    name.replace("/", "");
-    name.toLowerCase();
-    SerialMon.println("name = "+name);
-    makefilename = "/"+name+".txt";
-    SerialMon.println("file name  = "+makefilename);
-    return makefilename;
+    else // If CLBS available, cut only time instead!!
+    {
+      int startIndex = sentence.indexOf("+CLBS: ");
+      sentence = sentence.substring(startIndex + 7, startIndex + 55);
+      sentence.replace("\r", "");
+      sentence.replace("\n", "");
+      sentence.replace("AT+CLBS=4ERROR", "");
+      sentence.replace("AT+CPSI?+CPSI: NO SERVICE", "");
+      // SerialMon.println("Location = "+sentence);
+      int commaIndex = 0;
+      int lastCommaIndex = 0;
+      String values[6];
+      for (int i = 0; i < 6; i++) {
+          commaIndex = sentence.indexOf(',', lastCommaIndex);
+          String temp = sentence.substring(lastCommaIndex, commaIndex);
+          values[i] = temp;
+          lastCommaIndex = commaIndex + 1;
+          networkinfo.lat = values[1];
+          networkinfo.lon = values[2];
+      }
+      int startIndexdate = sentence.indexOf("2023/");
+      networkinfo.date = sentence.substring(startIndexdate, startIndexdate + 10);
+      networkinfo.time = sentence.substring(startIndexdate + 11, startIndexdate + 19);
+      String name = sentence.substring(startIndexdate + 5, startIndexdate + 7)+sentence.substring(startIndexdate+7, startIndexdate + 10);
+      name.replace("/", "");
+      name.toLowerCase();
+      _makefilename = "/"+name+".txt";
+    }
+    return _makefilename;
 }
 
 void readcellinfo()
@@ -364,29 +570,38 @@ void readcellinfo()
 //     return jsonString;
 // }
 
-String makejson()
+String makeJson()
 {
-    const size_t bufferSize = JSON_OBJECT_SIZE(13) + 100; //JSON_OBJECT_SIZE(6) + JSON_OBJECT_SIZE(4) + 100;
-    DynamicJsonDocument doc(bufferSize);
+    String _output = "";
+    StaticJsonDocument<500> doc;
+    doc["Dev_id"] = "froz0001";
+    doc["Date"] = "2023/03/08";
+    doc["Time"] = "04:11:14";
+    doc["Batt_Lev"] = "100.0";
 
-    doc["Date"] = networkinfo.date;
-    doc["Time"] = networkinfo.time;
-    doc["Batt_V"] = battinfo.batt_volt;
-    doc["Batt_Lev"] = battinfo.batt_level;
-    doc["Temp"] = tempandhumi.temp;
-    doc["Humi"] = tempandhumi.humi;
-    doc["Lat"] = networkinfo.lat;
-    doc["Lon"] = networkinfo.lon;
-    doc["MCC"] = networkinfo.mcc;
-    doc["MNC"] = networkinfo.mnc;
-    doc["LAC"] = networkinfo.lac;
-    doc["SCellID"] = networkinfo.cid;
-    doc["RSSNR"] = networkinfo.rssnr;
+    JsonObject Sensor = doc.createNestedObject("Sensor");
 
-    String jsonString;
-    serializeJson(doc, jsonString);
-    SerialMon.println(jsonString);
-    return jsonString;
+    JsonObject Sensor_A4_C1_38_54_6E_F2 = Sensor.createNestedObject("A4:C1:38:54:6E:F2");
+    Sensor_A4_C1_38_54_6E_F2["Temp"] = "25.4";
+    Sensor_A4_C1_38_54_6E_F2["Humi"] = "60.0";
+
+    JsonObject Sensor_A4_C1_38_A9_4B_B3 = Sensor.createNestedObject("A4:C1:38:A9:4B:B3");
+    Sensor_A4_C1_38_A9_4B_B3["Temp"] = "25.6";
+    Sensor_A4_C1_38_A9_4B_B3["Humi"] = "57.0";
+
+    JsonObject Location = doc.createNestedObject("Location");
+    Location["Lat"] = "13.751798";
+    Location["Lon"] = "100.595377";
+
+    JsonObject Network = doc.createNestedObject("Network");
+    Network["MCC"] = "520";
+    Network["MNC"] = "03";
+    Network["LAC"] = "824";
+    Network["SCellID"] = "157455461";
+    Network["RSSNR"] = "12";
+
+    serializeJson(doc, _output);
+    return _output;
 }
 
 void readLog(String filename)
@@ -470,7 +685,7 @@ void sendrequest()
         }
     }
     client.stop();
-    Serial.println("Response =" + response);
+    // Serial.println("Response =" + response);
     int startIndex = response.indexOf("\"lat\":");
     int endIndex = response.indexOf(",\"lon\":");
     String lat = response.substring(startIndex + 6, endIndex);
@@ -479,8 +694,8 @@ void sendrequest()
     String lon = response.substring(startIndex, endIndex);
     networkinfo.lat = lat;
     networkinfo.lon = lon;
-    Serial.println("Latitude: " + lat);
-    Serial.println("Longitude: " + lon);
+    // Serial.println("Latitude: " + lat);
+    // Serial.println("Longitude: " + lon);
 }
 
 String getConfig(char* _conf_addr, uint16_t _conf_prt, char* _conf_full_fname)
@@ -489,7 +704,6 @@ String getConfig(char* _conf_addr, uint16_t _conf_prt, char* _conf_full_fname)
     if (!client.connect(_conf_addr, 80)) 
     {
         SerialMon.println(" fail");
-        // delay(10000);
         return _config;
     }
     SerialMon.println(" OK");
@@ -512,7 +726,7 @@ String getConfig(char* _conf_addr, uint16_t _conf_prt, char* _conf_full_fname)
     {
         String line = client.readStringUntil('\n');
         line.trim();
-        SerialMon.println(line);    // Uncomment this to show response header
+        // SerialMon.println(line);    // Uncomment this to show response header
         line.toLowerCase();
         if (line.startsWith("content-length:")) 
         {
@@ -534,49 +748,43 @@ String getConfig(char* _conf_addr, uint16_t _conf_prt, char* _conf_full_fname)
     return _config;
 } 
 
-// String getSensorID(char* _dev_id, String _json_str) // Code from https://arduinojson.org/v6/assistant/#/step4
-// {
-//     String _output;
-//     StaticJsonDocument<384> doc;
+String* getSensorID(char* _dev_id, String _json_str, uint8_t* _sensor_num) // Code from https://arduinojson.org/v6/assistant/#/step4
+{
+    String* _output;
+    StaticJsonDocument<500> doc;
+    DeserializationError error = deserializeJson(doc, _json_str);
 
-//     DeserializationError error = deserializeJson(doc, _json_str);
-
-//     if (error) {
-//     Serial.print(F("deserializeJson() failed: "));
-//     Serial.println(error.f_str());
-//     _output = "";
-//     return _output;
-//     }
-//     uint8_t config_index = doc["config"].size();
-//     for (uint8_t _conf_id = 0; _conf_id < config_index; _conf_id++)
-//     {
-//       // if (doc["config"][_conf_id].containsKey("dev_id"))
-//       // {
-//       //   char* data = doc["config"][_conf_id]["dev_id"];
-//       //   Serial.println(String(data));
-//       // }
-//       if (doc["config"][_conf_id].containsKey("dev_id"))
-//       {
-//         char* data = doc["config"][_conf_id]["dev_id"];
-//         Serial.printf("data is %s",data);
-//       }
-//     }
-//     // const char* config_0_dev_id = doc["config"][0]["dev_id"]; // "froz0001"
-//     // Serial.println("doc[\"config\"].size() = " + String(doc["config"].size()));
-
-//     // JsonArray config_0_target = doc["config"][0]["target"];
-//     // const char* config_0_target_0 = config_0_target[0]; // "A4:C1:38:54:6E:F2"
-//     // const char* config_0_target_1 = config_0_target[1]; // "A4:C1:38:A9:4B:B3"
-//     // const char* config_0_target_2 = config_0_target[2]; // "A4:C1:38:24:27:29"
-//     // const char* config_0_target_3 = config_0_target[3]; // "A4:C1:38:1D:F5:24"
-
-//     // const char* config_1_dev_id = doc["config"][1]["dev_id"]; // "froz0002"
-
-//     // const char* config_1_target_0 = doc["config"][1]["target"][0]; // "A4:C1:38:30:D3:A3"
-//     // const char* config_1_target_1 = doc["config"][1]["target"][1]; // "A4:C1:38:EF:1C:30"
-
-//     return _output;
-// }
+    if (error) 
+    {
+      Serial.print(F("deserializeJson() failed: "));
+      Serial.println(error.f_str());
+      return _output;
+    }
+    uint8_t config_index = doc["config"].size();
+    for (uint8_t _conf_id = 0; _conf_id < config_index; _conf_id++)
+    {
+      if (doc["config"][_conf_id].containsKey("dev_id"))
+      {
+        const char* data = doc["config"][_conf_id]["dev_id"];
+        if (strcmp(data,_dev_id) == 0) 
+        {
+          if (doc["config"][_conf_id].containsKey("target")) 
+          {
+            uint8_t target_num = doc["config"][_conf_id]["target"].size();
+            *_sensor_num = target_num;
+            String* _tmp_str = new String[target_num];
+            for (uint8_t _tg_id=0; _tg_id<target_num; _tg_id++)
+            {
+              const char* tgi = doc["config"][_conf_id]["target"][_tg_id];
+              _tmp_str[_tg_id] = (String(tgi));
+            }
+            return _tmp_str;
+          }
+          break;
+        }
+      }
+    }
+}
 
 bool upload2FTP(char* _FTPS_ADDR, char* _FTPS_PRT, char* _FTPS_USRN, char* _FTPS_PASS, char* _FTPS_TYPE, char* _FTPS_LOG_PATH, String _filename)
 {
@@ -708,33 +916,58 @@ void setup()
     pinMode(BAT_ADC, INPUT);
     delay(1000);
     modemPowerOn();
-    delay(1000);
+    delay(2000);
     sendAT("ATE0",1000,1);
     connect2LTE();
-    delay(3000);
-    BLEDevice::init("");
-    for (uint8_t mi_i=0; mi_i < sizeof(mijia_list)/sizeof(mijia_list[0]); mi_i++)
+    delay(1000);
+
+    uint8_t sensor_num = 0;
+    String res_config = getConfig(CONF_ADDR,CONF_PRT,CONF_FULL_FNAME);
+    if (res_config != "No data")
     {
-        // connectToSensor(BLEAddress(mijia_list[mi_i].c_str()));
-        // Serial.println("sensor mac = "+mijia_list[mi_i]+", temperature = "+String(tempandhumi.temp,1)+" C., humidity = "+String(tempandhumi.humi,1)+"%.");
-        connectToSensor(BLEAddress(mijia_list[mi_i].c_str()));
-        Serial.println("sensor mac = "+mijia_list[mi_i]+", temperature = "+tempandhumi.temp+" C., humidity = "+tempandhumi.humi+"%.");
+        String* mi_list = getSensorID(DEV_ID,res_config, &sensor_num);
+        Serial.println("sensor_num is "+String(sensor_num));
+        delay(1000);
+        BLEDevice::init("");
+        for (uint8_t mi_i=0; mi_i < sensor_num; mi_i++)
+        {
+            connectToSensor(BLEAddress(mi_list[mi_i].c_str()));
+            Serial.println("sensor mac = "+mi_list[mi_i]+", temperature = "+tempandhumi.temp+" C., humidity = "+tempandhumi.humi+"%.");
+        }
     }
+    // String* mi_list = getSensorID(DEV_ID,, &sensor_num);
+    // delay(1000);
+
+    // BLEDevice::init("");
+
+    // // for (uint8_t mi_i=0; mi_i < sizeof(mijia_list)/sizeof(mijia_list[0]); mi_i++)
+    // // {
+    // //     connectToSensor(BLEAddress(mijia_list[mi_i].c_str()));
+    // //     Serial.println("sensor mac = "+mijia_list[mi_i]+", temperature = "+tempandhumi.temp+" C., humidity = "+tempandhumi.humi+"%.");
+    // // }
+
+    // for (uint8_t mi_i=0; mi_i < sensor_num; mi_i++)
+    // {
+    //     connectToSensor(BLEAddress(mi_list[mi_i].c_str()));
+    //     Serial.println("sensor mac = "+mi_list[mi_i]+", temperature = "+tempandhumi.temp+" C., humidity = "+tempandhumi.humi+"%.");
+    // }
+
+
     // pClient = BLEDevice::createClient();
 
     // connectToSensor(BLEAddress(mijia_list[mi_i]));
     
-    // delay(5000);
-    // readBattlevel();
-    // delay(500);
-    // readlocation();
-    // delay(2000);
-    // readcellinfo();
-    // delay(2000);
+    delay(5000);
+    readBattlevel();
+    delay(500);
+    readlocation();
+    delay(2000);
+    readcellinfo();
+    delay(2000);
     // pClient->disconnect();
 
     // delay(3000);
-    // // sendrequest();
+    sendrequest();
     // writelog(makefilename, makejson());
     // delay(1000);
     // // readLog(makefilename);
@@ -755,14 +988,14 @@ void setup()
 
 void loop()
 {
-//   while (true) {
-//     if (SerialAT.available()) {
-//       Serial.write(SerialAT.read());
-//     }
-//     if (Serial.available()) {
-//       SerialAT.write(Serial.read());
-//     }
-//     delay(1);
-//   }
+  while (true) {
+    if (SerialAT.available()) {
+      Serial.write(SerialAT.read());
+    }
+    if (Serial.available()) {
+      SerialAT.write(Serial.read());
+    }
+    delay(1);
+  }
 //   vTaskDelay(100 / portTICK_PERIOD_MS);
 }
