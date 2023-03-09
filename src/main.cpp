@@ -1,3 +1,4 @@
+#include <time.h>
 #include <BLEDevice.h>
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -61,34 +62,25 @@ struct SENSOR_DATA {
 
 SENSOR_DATA tempandhumi;
 
-struct NETWORK_INFO {
-    // Location
-    String date; // Use 1
-    String time; // Use 2
-    String lat; // Use 5
-    String lon; // Use 6
+struct LOCATION_INFO{
+    String lat = "";
+    String lon = "";
+};
+LOCATION_INFO location_info;
 
-    // Cell site information
-    char type[10];
-    char mode[10];
+struct NETWORK_INFO {
     String mcc; 
     String mnc; 
     int lac = 0;
     String cid; 
-    char freq_b[15];
-    double rsrq = 0;
-    double rsrp = 0;
-    double rssi = 0;
     int rssnr; 
 };
-
 NETWORK_INFO networkinfo;
 
 struct BATT_INFO {
     String batt_volt;
     String batt_level;
 };
-
 BATT_INFO battinfo;
 
 // The remote service we wish to connect to.
@@ -150,8 +142,9 @@ void modemPowerOn()
     digitalWrite(PWR_PIN, LOW);
 }
 
-void readBattlevel()
+BATT_INFO readBattInfo()
 {
+    BATT_INFO _batt_info;
     int batt_adc_avg = 0;
     int batt_val_idx = 0;
     // Store batt adc for 1000 values tehn average them
@@ -162,9 +155,10 @@ void readBattlevel()
     delay(1000);
     batt_adc_avg = (batt_adc_avg / batt_val_idx) + 212;
     float batt_v = (2 * batt_adc_avg * 3.3) / 4096;
-    battinfo.batt_volt = String(batt_v, 2);
+    _batt_info.batt_volt = String(batt_v, 2);
     float batt_level = 100 * (1 - ((4.24 - batt_v) / (4.24 - 2.5))); // Batt off @ v = 2.5 v, full @ v = 4.12 v
-    battinfo.batt_level = String(batt_level, 2);
+    _batt_info.batt_level = String(batt_level, 2);
+    return _batt_info;
 }
 
 String sendAT(String _command, int interval, boolean _debug)
@@ -404,17 +398,17 @@ void listAllFile()
     SerialMon.print("\n\n");
 }
 
-bool writelog(String filename, String data2write)
+bool writelog(String _filename, String _data2write)
 {
     char mode[5];
-    String selectedfile;
     SPIFFS.begin();
+    if (!_filename.startsWith("/")) _filename = "/"+ _filename;
+
     // 1. Mount SPIFFS
     if (!SPIFFS.begin()) {
         SerialMon.println("An Error has occurred while mounting SPIFFS");
         return false;
     }
-    //   return false;
 
     // 2. Check SPIFFS's space. If not enough, delete all file except .conf file
     if (int(SPIFFS.totalBytes() - SPIFFS.usedBytes()) < MIN_SPACE) {
@@ -423,7 +417,6 @@ bool writelog(String filename, String data2write)
         File file = folder.openNextFile();
         while (file) {
             SerialMon.println(file.name());
-            selectedfile = String(file.name());
             SPIFFS.remove(file.name());
             file = folder.openNextFile();
         }
@@ -432,7 +425,7 @@ bool writelog(String filename, String data2write)
     }
     // listAllFile();
     // 3. Check file exist
-    if (!SPIFFS.exists(filename)) {
+    if (!SPIFFS.exists(_filename)) {
         sprintf(mode, "w"); // If file is not exist, write i w mode
     }
     else {
@@ -442,8 +435,8 @@ bool writelog(String filename, String data2write)
     // SerialMon.println("Mode is " + String(mode));
     SerialMon.print("\n");
     // 4. Open file and write data
-    File file = SPIFFS.open(filename, mode);
-    file.println(data2write); // Write file and count the written bytes.
+    File file = SPIFFS.open(_filename, mode);
+    file.println(_data2write); // Write file and count the written bytes.
     // 5. Close file
     file.close();
     // 6. Unmount SPIFFS
@@ -451,68 +444,10 @@ bool writelog(String filename, String data2write)
     return true;
 }
 
-String readlocation()
+NETWORK_INFO readcellinfo()
 {
-    String _makefilename = "";
-    String sentence = sendAT("AT+CLBS=4", 10000, 1);
-    if(sentence.indexOf("ERROR") != -1) // If CLBS time unavailable, get from RTC instead
-    {
-      String YY = ""; String DD = "";
-      rtc_info = getRTC();
-      SerialMon.println("rtc_info.date is "+rtc_info.date);
-      SerialMon.println("rtc_info.time is "+rtc_info.time);
-      if ((rtc_info.date == "") || (rtc_info.time == "")) return _makefilename;
-      String tmp_date[3]; String tmp_utc[3];
-      int slashIndex = 0;
-      int lastslashIndex = 0;
-      for (int i = 0; i < 3; i++) 
-      {
-          slashIndex = rtc_info.date.indexOf('/', lastslashIndex);
-          String temp = rtc_info.date.substring(lastslashIndex, slashIndex);
-          tmp_date[i] = temp;
-          lastslashIndex = slashIndex + 1;
-      }
-      YY = String(tmp_date[0].toInt() - 100*int(tmp_date[0].toInt()/100));
-      DD = tmp_date[2];
-      _makefilename = "/"+DD+YY+".txt";
-      networkinfo.date = rtc_info.date;
-      networkinfo.time = rtc_info.time;
-    }
-    else // If CLBS available, cut only time instead!!
-    {
-      int startIndex = sentence.indexOf("+CLBS: ");
-      sentence = sentence.substring(startIndex + 7, startIndex + 55);
-      sentence.replace("\r", "");
-      sentence.replace("\n", "");
-      sentence.replace("AT+CLBS=4ERROR", "");
-      sentence.replace("AT+CPSI?+CPSI: NO SERVICE", "");
-      // SerialMon.println("Location = "+sentence);
-      int commaIndex = 0;
-      int lastCommaIndex = 0;
-      String values[6];
-      for (int i = 0; i < 6; i++) {
-          commaIndex = sentence.indexOf(',', lastCommaIndex);
-          String temp = sentence.substring(lastCommaIndex, commaIndex);
-          values[i] = temp;
-          lastCommaIndex = commaIndex + 1;
-          networkinfo.lat = values[1];
-          networkinfo.lon = values[2];
-      }
-      int startIndexdate = sentence.indexOf("2023/");
-      networkinfo.date = sentence.substring(startIndexdate, startIndexdate + 10);
-      networkinfo.time = sentence.substring(startIndexdate + 11, startIndexdate + 19);
-      String name = sentence.substring(startIndexdate + 5, startIndexdate + 7)+sentence.substring(startIndexdate+7, startIndexdate + 10);
-      name.replace("/", "");
-      name.toLowerCase();
-      _makefilename = "/"+name+".txt";
-    }
-    return _makefilename;
-}
-
-void readcellinfo()
-{
+    NETWORK_INFO _nw_info;
     String info = sendAT("AT+CPSI?", 10000, 1);
-    writelog("/config", info);
     // +CPSI:
     // LTE,Online,520-03,0x332,166401388,241,EUTRAN-BAND3,1450,5,0,17,71,72,2
     // +CPSI:
@@ -534,70 +469,12 @@ void readcellinfo()
         lastCommaIndex = commaIndex + 1;
     }
     int lacDec = (int)strtol(values[3].c_str(), NULL, 16);
-    networkinfo.rssnr = values[13].toInt();
-    networkinfo.mcc = values[2].substring(0, 3);
-    networkinfo.mnc = values[2].substring(4, 6);
-    networkinfo.lac = lacDec;
-    networkinfo.cid = values[4];
-}
-
-// String makejson()
-// {
-//     const size_t bufferSize = JSON_OBJECT_SIZE(13) + 100; //JSON_OBJECT_SIZE(6) + JSON_OBJECT_SIZE(4) + 100;
-//     DynamicJsonDocument doc(bufferSize);
-
-//     doc["Date"] = networkinfo.date;
-//     doc["Time"] = networkinfo.time;
-//     doc["Batt_V"] = battinfo.batt_volt;
-//     doc["Batt_Lev"] = battinfo.batt_level;
-//     doc["Temp"] = tempandhumi.temp;
-//     doc["Humi"] = tempandhumi.humi;
-//     doc["Lat"] = networkinfo.lat;
-//     doc["Lon"] = networkinfo.lon;
-//     doc["MCC"] = networkinfo.mcc;
-//     doc["MNC"] = networkinfo.mnc;
-//     doc["LAC"] = networkinfo.lac;
-//     doc["SCellID"] = networkinfo.cid;
-//     doc["RSSNR"] = networkinfo.rssnr;
-
-//     String jsonString;
-//     serializeJson(doc, jsonString);
-//     SerialMon.println(jsonString);
-//     return jsonString;
-// }
-
-String makeJson()
-{
-    String _output = "";
-    StaticJsonDocument<500> doc;
-    doc["Dev_id"] = "froz0001";
-    doc["Date"] = "2023/03/08";
-    doc["Time"] = "04:11:14";
-    doc["Batt_Lev"] = "100.0";
-
-    JsonObject Sensor = doc.createNestedObject("Sensor");
-
-    JsonObject Sensor_A4_C1_38_54_6E_F2 = Sensor.createNestedObject("A4:C1:38:54:6E:F2");
-    Sensor_A4_C1_38_54_6E_F2["Temp"] = "25.4";
-    Sensor_A4_C1_38_54_6E_F2["Humi"] = "60.0";
-
-    JsonObject Sensor_A4_C1_38_A9_4B_B3 = Sensor.createNestedObject("A4:C1:38:A9:4B:B3");
-    Sensor_A4_C1_38_A9_4B_B3["Temp"] = "25.6";
-    Sensor_A4_C1_38_A9_4B_B3["Humi"] = "57.0";
-
-    JsonObject Location = doc.createNestedObject("Location");
-    Location["Lat"] = "13.751798";
-    Location["Lon"] = "100.595377";
-
-    JsonObject Network = doc.createNestedObject("Network");
-    Network["MCC"] = "520";
-    Network["MNC"] = "03";
-    Network["LAC"] = "824";
-    Network["SCellID"] = "157455461";
-    Network["RSSNR"] = "12";
-
-    serializeJson(doc, _output);
-    return _output;
+    _nw_info.rssnr = values[13].toInt();
+    _nw_info.mcc = values[2].substring(0, 3);
+    _nw_info.mnc = values[2].substring(4, 6);
+    _nw_info.lac = lacDec;
+    _nw_info.cid = values[4];
+    return _nw_info;
 }
 
 void readLog(String filename)
@@ -660,8 +537,9 @@ void modulePowerOff()
     digitalWrite(12, LOW);
 }
 
-void sendrequest()
+LOCATION_INFO sendrequest()
 {
+    LOCATION_INFO _location_info;
     String payload = "{\"token\":\"" + apiKey + "\",\"radio\":\"lte\",\"mcc\":" + networkinfo.mcc + ",\"mnc\":" + networkinfo.mnc + ",\"cells\":[{\"lac\":" + networkinfo.lac + ",\"cid\":" + networkinfo.cid + ",\"psc\":0}],\"address\":1}";
     String response;
     client.connect("ap1.unwiredlabs.com", 80);
@@ -681,17 +559,15 @@ void sendrequest()
         }
     }
     client.stop();
-    // Serial.println("Response =" + response);
     int startIndex = response.indexOf("\"lat\":");
     int endIndex = response.indexOf(",\"lon\":");
     String lat = response.substring(startIndex + 6, endIndex);
     startIndex = endIndex + 7;
     endIndex = response.indexOf(",\"accuracy\":");
     String lon = response.substring(startIndex, endIndex);
-    networkinfo.lat = lat;
-    networkinfo.lon = lon;
-    Serial.println("Latitude: " + lat);
-    Serial.println("Longitude: " + lon);
+    _location_info.lat = lat;
+    _location_info.lon = lon;
+    return _location_info;
 }
 
 String getConfig(char* _conf_addr, uint16_t _conf_prt, char* _conf_full_fname)
@@ -759,7 +635,6 @@ String* getSensorID(char* _dev_id, String _json_str, uint8_t* _sensor_num, uint8
     uint8_t config_index = doc["config"].size();
     for (uint8_t _conf_id = 0; _conf_id < config_index; _conf_id++)
     {
-      Serial.println("_conf_id = "+String(_conf_id));
       if (doc["config"][_conf_id].containsKey("dev_id"))
       {
         const char* data = doc["config"][_conf_id]["dev_id"];
@@ -769,9 +644,7 @@ String* getSensorID(char* _dev_id, String _json_str, uint8_t* _sensor_num, uint8
           {
             uint8_t target_num = doc["config"][_conf_id]["target"].size();
             *_sensor_num = target_num;
-            Serial.println("target_num = "+String(target_num));
             String* _tmp_str = new String[target_num];
-            Serial.println("size of xx is "+String(sizeof(_tmp_str)));
             for (uint8_t _tg_id=0; _tg_id<target_num; _tg_id++)
             {
               const char* tgi = doc["config"][_conf_id]["target"][_tg_id];
@@ -788,6 +661,29 @@ String* getSensorID(char* _dev_id, String _json_str, uint8_t* _sensor_num, uint8
       }
     }
     return _output;
+}
+
+uint16_t getDOY(String _date_str, String _delimeter) 
+{
+  uint16_t _doy = 0;
+  int delim_st = _date_str.indexOf(_delimeter);
+  int delim_nd = delim_st + _date_str.indexOf(_delimeter);
+  uint16_t _year = _date_str.substring(0,delim_st).toInt();
+  uint8_t _month = _date_str.substring(delim_st+1,delim_nd).toInt(); 
+  uint8_t _day = _date_str.substring(delim_nd).toInt();
+  _year = _year - 1970;
+  uint16_t _tmp_doy = 0;
+  for (uint8_t _mx = 1; _mx<_month; _mx++)
+  {
+    if (_mx == 2)
+    {
+      (_year%4 == 0)? _tmp_doy+=29 : _tmp_doy+=28; 
+    }
+    if ((_mx == 1) || (_mx == 3) || (_mx == 5) || (_mx == 7) || (_mx == 8) || (_mx == 10) || (_mx == 12))  _tmp_doy+= 31; // 31
+    if ((_mx == 4) || (_mx == 6) || (_mx == 9) || (_mx == 11))  _tmp_doy+= 30; // 30
+  }
+  _tmp_doy += _day;
+  return _tmp_doy;
 }
 
 bool upload2FTP(char* _FTPS_ADDR, char* _FTPS_PRT, char* _FTPS_USRN, char* _FTPS_PASS, char* _FTPS_TYPE, char* _FTPS_LOG_PATH, String _filename)
@@ -880,39 +776,6 @@ bool upload2FTP(char* _FTPS_ADDR, char* _FTPS_PRT, char* _FTPS_USRN, char* _FTPS
     return true;
 }
 
-void logCreate()
-{
-    // StaticJsonDocument<384> doc;
-
-    // doc["Dev_id"] = "froz0001";
-    // doc["Date"] = "2023/03/08";
-    // doc["Time"] = "04:11:14";
-    // doc["Batt_Lev"] = "100.0";
-
-    // JsonObject Sensor = doc.createNestedObject("Sensor");
-
-    // JsonObject Sensor_A4_C1_38_54_6E_F2 = Sensor.createNestedObject("A4:C1:38:54:6E:F2");
-    // Sensor_A4_C1_38_54_6E_F2["Temp"] = "25.4";
-    // Sensor_A4_C1_38_54_6E_F2["Humi"] = "60.0";
-
-    // JsonObject Sensor_A4_C1_38_A9_4B_B3 = Sensor.createNestedObject("A4:C1:38:A9:4B:B3");
-    // Sensor_A4_C1_38_A9_4B_B3["Temp"] = "25.6";
-    // Sensor_A4_C1_38_A9_4B_B3["Humi"] = "57.0";
-
-    // JsonObject Location = doc.createNestedObject("Location");
-    // Location["Lat"] = "13.751798";
-    // Location["Lon"] = "100.595377";
-
-    // JsonObject Network = doc.createNestedObject("Network");
-    // Network["MCC"] = "520";
-    // Network["MNC"] = "03";
-    // Network["LAC"] = "824";
-    // Network["SCellID"] = "157455461";
-    // Network["RSSNR"] = "12";
-
-    // serializeJson(doc, output);
-}
-
 void setup()
 {
     SerialMon.begin(115200);
@@ -926,6 +789,22 @@ void setup()
     delay(1000);
 
     uint8_t sensor_num = 0; uint8_t sleep_minutes = 0;
+    String js_log_str = "";
+
+    StaticJsonDocument<800> js_doc;
+    // 1. Get device ID
+    js_doc["Dev_id"] = DEV_ID;
+    // 2. Get current date and time
+    rtc_info = getRTC();
+    js_doc["Date"] = rtc_info.date;
+    js_doc["Time"] = rtc_info.time;
+    // 3. Get batterry info
+    battinfo = readBattInfo();
+    js_doc["Batt_V"] = battinfo.batt_volt;
+    js_doc["Batt_Lev"] = battinfo.batt_level;
+    // 4. Get Sensor info 
+    JsonObject Sensor = js_doc.createNestedObject("Sensor");
+    JsonObject sensor_inf;
     String res_config = getConfig(CONF_ADDR,CONF_PRT,CONF_FULL_FNAME);
     if (res_config != "No data")
     {
@@ -935,59 +814,54 @@ void setup()
         BLEDevice::init("");
         for (uint8_t mi_i=0; mi_i < sensor_num; mi_i++)
         {
+            sensor_inf = Sensor.createNestedObject(mi_list[mi_i].c_str());
             connectToSensor(BLEAddress(mi_list[mi_i].c_str()));
+            sensor_inf["Temp"] = tempandhumi.temp;
+            sensor_inf["Humi"] = tempandhumi.humi;
             Serial.println("sensor mac = "+mi_list[mi_i]+", temperature = "+tempandhumi.temp+" C., humidity = "+tempandhumi.humi+"%.");
         }
     }
-    // String* mi_list = getSensorID(DEV_ID,, &sensor_num);
-    // delay(1000);
+    // 5. Get cell site infomation
+    JsonObject Network = js_doc.createNestedObject("Network");
+    networkinfo = readcellinfo();
+    Network["MCC"] = networkinfo.mcc;
+    Network["MNC"] = networkinfo.mnc;
+    Network["LAC"] = String(networkinfo.lac);
+    Network["SCellID"] = networkinfo.cid;
+    Network["RSSNR"] = String(networkinfo.rssnr);
+    // 6. Solve base location from cell site information
+    // If sleep time more than 15 minutes, send http post to unwirelabs
+    if (sleep_minutes > (uint8_t)((24*60)/100))
+    {
+        JsonObject Location = js_doc.createNestedObject("Location");
+        location_info = sendrequest();
+        Location["Lat"] = location_info.lat;
+        Location["Lon"] = location_info.lon;
+    }
+    // 7. Serialize the log string
+    serializeJson(js_doc,js_log_str);
+    Serial.println("js_log_str is "+js_log_str);
 
-    // BLEDevice::init("");
-
-    // // for (uint8_t mi_i=0; mi_i < sizeof(mijia_list)/sizeof(mijia_list[0]); mi_i++)
-    // // {
-    // //     connectToSensor(BLEAddress(mijia_list[mi_i].c_str()));
-    // //     Serial.println("sensor mac = "+mijia_list[mi_i]+", temperature = "+tempandhumi.temp+" C., humidity = "+tempandhumi.humi+"%.");
-    // // }
-
-    // for (uint8_t mi_i=0; mi_i < sensor_num; mi_i++)
-    // {
-    //     connectToSensor(BLEAddress(mi_list[mi_i].c_str()));
-    //     Serial.println("sensor mac = "+mi_list[mi_i]+", temperature = "+tempandhumi.temp+" C., humidity = "+tempandhumi.humi+"%.");
-    // }
-
-
-    // pClient = BLEDevice::createClient();
-
-    // connectToSensor(BLEAddress(mijia_list[mi_i]));
-    
-    delay(5000);
-    readBattlevel();
-    delay(500);
-    readlocation();
+    // 8. Create log filename and save
+    // char log_fname_ch[30]
+    String log_filename = DEV_ID + String("_") + String(getDOY(rtc_info.date, "/")) + ".log";
+    Serial.println("log_filename is "+log_filename);
+    writelog(log_filename, js_log_str);
+    delay(1000);
+    readLog(makefilename);
     delay(2000);
-    readcellinfo();
-    delay(2000);
-    // pClient->disconnect();
-
-    // delay(3000);
-    sendrequest();
-    // writelog(makefilename, makejson());
-    // delay(1000);
-    // // readLog(makefilename);
-    // // delay(2000);
     // upload2FTP(makefilename);
     // delay(2000);
 
-    modulePowerOff();
-    if (sleep_minutes != 0)  
-    {
-        sleep(sleep_minutes);
-    }
-    else
-    {
-        sleep(SLEEP_DEFAULT_MINUTE);
-    }
+    // modulePowerOff();
+    // if (sleep_minutes != 0)  
+    // {
+    //     sleep(sleep_minutes);
+    // }
+    // else
+    // {
+    //     sleep(SLEEP_DEFAULT_MINUTE);
+    // }
 }
 
 void loop()
