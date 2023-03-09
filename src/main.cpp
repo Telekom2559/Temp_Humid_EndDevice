@@ -401,9 +401,10 @@ void listAllFile()
 bool writelog(String _filename, String _data2write)
 {
     char mode[5];
-    SPIFFS.begin();
-    if (!_filename.startsWith("/")) _filename = "/"+ _filename;
+    // SPIFFS.begin(true);
+    // if (!_filename.startsWith("/")) _filename = "/"+ _filename;
 
+    Serial.println("_filename is "+_filename);
     // 1. Mount SPIFFS
     if (!SPIFFS.begin()) {
         SerialMon.println("An Error has occurred while mounting SPIFFS");
@@ -414,6 +415,7 @@ bool writelog(String _filename, String _data2write)
     if (int(SPIFFS.totalBytes() - SPIFFS.usedBytes()) < MIN_SPACE) {
         SerialMon.println("SPIFFS does not have enough space.");
         File folder = SPIFFS.open("/");
+        Serial.println("open full space");
         File file = folder.openNextFile();
         while (file) {
             SerialMon.println(file.name());
@@ -423,7 +425,7 @@ bool writelog(String _filename, String _data2write)
         ESP.restart();
         return false;
     }
-    // listAllFile();
+    listAllFile();
     // 3. Check file exist
     if (!SPIFFS.exists(_filename)) {
         sprintf(mode, "w"); // If file is not exist, write i w mode
@@ -431,10 +433,15 @@ bool writelog(String _filename, String _data2write)
     else {
         sprintf(mode, "a"); // If this file already exist, let's append file.
     }
+    Serial.printf("save mode is %s\r\n",mode);
     delay(100);
     // SerialMon.println("Mode is " + String(mode));
     SerialMon.print("\n");
     // 4. Open file and write data
+    Serial.println("open log to save");
+    Serial.println("_filename is "+_filename);
+    delay(1000);
+    // if (_filename.startsWith("/")) _filename.replace("/","");
     File file = SPIFFS.open(_filename, mode);
     file.println(_data2write); // Write file and count the written bytes.
     // 5. Close file
@@ -686,7 +693,7 @@ uint16_t getDOY(String _date_str, String _delimeter)
   return _tmp_doy;
 }
 
-bool upload2FTP(char* _FTPS_ADDR, char* _FTPS_PRT, char* _FTPS_USRN, char* _FTPS_PASS, char* _FTPS_TYPE, char* _FTPS_LOG_PATH, String _filename)
+bool upload2FTP(char* _FTPS_ADDR, uint16_t _FTPS_PRT, char* _FTPS_USRN, char* _FTPS_PASS, uint8_t _FTPS_TYPE, char* _FTPS_LOG_PATH, String _filename)
 {
     char ATcommand[60];
     SPIFFS.begin();
@@ -713,6 +720,7 @@ bool upload2FTP(char* _FTPS_ADDR, char* _FTPS_PRT, char* _FTPS_USRN, char* _FTPS
     }
 
     int file_len = fileToRead.size();
+    Serial.println("file_len = "+String(file_len));
     SerialMon.println("file_len = " + String(file_len) + " bytes.");
     if (file_len <= 0)
     {
@@ -722,7 +730,7 @@ bool upload2FTP(char* _FTPS_ADDR, char* _FTPS_PRT, char* _FTPS_USRN, char* _FTPS
 
     //3. Move file from SPIFFS to drive E: of sim7600
     memset(ATcommand, 0, sizeof(ATcommand));
-    sprintf(ATcommand, "AT+CFTRANRX=\"C:%s\",%d", _filename, file_len);
+    sprintf(ATcommand, "AT+CFTRANRX=\"C:%s\",%d", _filename.c_str(), file_len);
     String writefile_response = sendAT(ATcommand, 5000, 1);
     SerialMon.println(" writefile_response is " +  writefile_response);
     while (fileToRead.available())
@@ -757,7 +765,7 @@ bool upload2FTP(char* _FTPS_ADDR, char* _FTPS_PRT, char* _FTPS_USRN, char* _FTPS
     String filenameno = _filename;
     filenameno.replace("/", "");
     memset(ATcommand, 0, sizeof(ATcommand));
-    sprintf(ATcommand, "AT+CFTPSPUTFILE=\"%s\",1", String(_FTPS_LOG_PATH) +String(filenameno));
+    sprintf(ATcommand, "AT+CFTPSPUTFILE=\"%s\",1", (String(_FTPS_LOG_PATH) +filenameno).c_str());
     String response_uploadfile = sendAT(ATcommand, 20000, 1);
     SerialAT.flush();
     if (response_uploadfile.indexOf("+CFTPSPUTFILE: 0") != -1) {
@@ -771,7 +779,7 @@ bool upload2FTP(char* _FTPS_ADDR, char* _FTPS_PRT, char* _FTPS_USRN, char* _FTPS
     sendAT("AT+CFTPSSTOP", 500, 1);
     // 9. Remove the uploaded file from drive E:
     memset(ATcommand, 0, sizeof(ATcommand));
-    sprintf(ATcommand, "AT+FSDEL=%s", _filename);
+    sprintf(ATcommand, "AT+FSDEL=%s", _filename.c_str());
     sendAT(ATcommand, 2000, 1);
     return true;
 }
@@ -844,24 +852,24 @@ void setup()
 
     // 8. Create log filename and save
     // char log_fname_ch[30]
-    String log_filename = DEV_ID + String("_") + String(getDOY(rtc_info.date, "/")) + ".log";
+    String log_filename = String("/") + DEV_ID + String("_") + String(getDOY(rtc_info.date, "/")) + ".log";
     Serial.println("log_filename is "+log_filename);
     writelog(log_filename, js_log_str);
     delay(1000);
-    readLog(makefilename);
+    // readLog(log_filename);
     delay(2000);
-    // upload2FTP(makefilename);
-    // delay(2000);
+    upload2FTP(FTPS_ADDR,FTPS_PRT,FTPS_USRN,FTPS_PASS,FTPS_TYPE,FTPS_LOG_PATH,log_filename);
+    delay(2000);
 
-    // modulePowerOff();
-    // if (sleep_minutes != 0)  
-    // {
-    //     sleep(sleep_minutes);
-    // }
-    // else
-    // {
-    //     sleep(SLEEP_DEFAULT_MINUTE);
-    // }
+    modulePowerOff();
+    if (sleep_minutes != 0)  
+    {
+        sleep(sleep_minutes);
+    }
+    else
+    {
+        sleep(SLEEP_DEFAULT_MINUTE);
+    }
 }
 
 void loop()
