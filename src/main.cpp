@@ -1,6 +1,5 @@
-#include <time.h>
-#include <BLEDevice.h>
 #include <Arduino.h>
+#include <BLEDevice.h>
 #include <ArduinoJson.h>
 #include <Ticker.h>
 #include <SPIFFS.h>
@@ -20,17 +19,14 @@
 #define BAT_ADC 35
 #define SLEEP_DEFAULT_MINUTE    10       
 
-// #define MJ_ADDR "A4:C1:38:54:6E:F2"
 #define apiKey (String) "pk.71031a62fba9814c0898ae766b971df1"
 
 #define FTPS_ADDR               "188.166.217.51"
 #define FTPS_PRT                7021
-#define FTPS_LOG_PATH           "/DEV/Log/" // "/BER/" 
-// #define FTPS_CONF_PATH          "/DEV/Config/"
+#define FTPS_LOG_PATH           "/DEV/Log/"
 #define FTPS_USRN               "tung"
 #define FTPS_PASS               "anundaJJ795"
 #define FTPS_TYPE               1
-// #define CONF_FNAME              "ble_config.json"
 
 // Sensor config
 #define CONF_ADDR               "161.246.35.199"
