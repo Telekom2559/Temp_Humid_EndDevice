@@ -85,6 +85,25 @@ static BLEUUID serviceUUID("ebe0ccb0-7a0a-4b0c-8a1a-6ff2997da3a6");
 // The characteristic of the remote service we are interested in.
 static BLEUUID charUUID("ebe0ccc1-7a0a-4b0c-8a1a-6ff2997da3a6");
 
+String sendAT(String _command, int interval, boolean _debug)
+{
+    String _response = "";
+    SerialAT.println(_command);
+    long int starttime = millis();
+    while (((millis() - starttime)) < interval) {
+        while (SerialAT.available() > 0) {
+            int _read = SerialAT.read();
+            _response += char(_read);
+        }
+    }
+    SerialAT.flush();
+    if (_debug) 
+    {
+      SerialMon.print(_response);
+    }
+    return _response;
+}
+
 void decrypted(BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify)
 {
     int16_t tmp_data = (pData[0] | (pData[1] << 8));
@@ -138,13 +157,6 @@ void modemPowerOn()
     digitalWrite(PWR_PIN, LOW);
 }
 
-void moduleOff()
-{
-    String _res_shutdown = sendAT("AT+CPOF", 9000, 0);
-    digitalWrite(12, LOW);
-    Serial.println("_res_shutdown = " + _res_shutdown);
-}
-
 void modulePowerOff()
 {
     digitalWrite(4, HIGH);
@@ -153,6 +165,13 @@ void modulePowerOff()
     delay(3000);
     digitalWrite(4, HIGH);
     digitalWrite(12, LOW);
+}
+
+void moduleOff()
+{
+    String _res_shutdown = sendAT("AT+CPOF", 9000, 0);
+    digitalWrite(12, LOW);
+    Serial.println("_res_shutdown = " + _res_shutdown);
 }
 
 BATT_INFO readBattInfo()
@@ -174,24 +193,6 @@ BATT_INFO readBattInfo()
     return _batt_info;
 }
 
-String sendAT(String _command, int interval, boolean _debug)
-{
-    String _response = "";
-    SerialAT.println(_command);
-    long int starttime = millis();
-    while (((millis() - starttime)) < interval) {
-        while (SerialAT.available() > 0) {
-            int _read = SerialAT.read();
-            _response += char(_read);
-        }
-    }
-    SerialAT.flush();
-    if (_debug) 
-    {
-      SerialMon.print(_response);
-    }
-    return _response;
-}
 
 void connect2LTE()
 {
@@ -395,6 +396,8 @@ RTC_INFO getRTC()
     return _res_rtc_info;
 }
 
+//  Add upload cycle handle in config?
+
 void listAllFile()
 {
     if (!SPIFFS.begin(true)) {
@@ -568,6 +571,7 @@ LOCATION_INFO sendrequest()
     return _location_info;
 }
 
+// Download sensor_config.json & keep in string "_config"
 String getConfig(char* _conf_addr, uint16_t _conf_prt, char* _conf_full_fname)
 {
     String _config = "No data";
@@ -610,6 +614,7 @@ String getConfig(char* _conf_addr, uint16_t _conf_prt, char* _conf_full_fname)
     while (client.available())
     {
         String _tmp_str = client.readStringUntil('\n');
+        SerialMon.println("_tmp_str = "+_tmp_str);
         if (_tmp_str.startsWith("{"))
         {
             _config = _tmp_str.substring(0,contentLength);
@@ -618,6 +623,7 @@ String getConfig(char* _conf_addr, uint16_t _conf_prt, char* _conf_full_fname)
     return _config;
 } 
 
+// Grep only the Mijia Mac@ from "_config" then keep into string array "_output"
 String* getSensorID(char* _dev_id, String _json_str, uint8_t* _sensor_num, uint8_t* _sleep_minutes) // Code from https://arduinojson.org/v6/assistant/#/step4
 {
     String* _output;
@@ -661,6 +667,7 @@ String* getSensorID(char* _dev_id, String _json_str, uint8_t* _sensor_num, uint8
     return _output;
 }
 
+// Convert UTC date (YYYY/mm/dd) to day of this year
 uint16_t getDOY(String _date_str, String _delimeter) 
 {
   uint16_t _doy = 0;
@@ -777,6 +784,7 @@ bool upload2FTP(char* _FTPS_ADDR, uint16_t _FTPS_PRT, char* _FTPS_USRN, char* _F
 
 void setup()
 {
+    unsigned long time_start = millis();
     SerialMon.begin(115200);
     SerialAT.begin(UART_BAUD, SERIAL_8N1, PIN_RX, PIN_TX);
     pinMode(BAT_ADC, INPUT);
@@ -805,6 +813,7 @@ void setup()
     JsonObject Sensor = js_doc.createNestedObject("Sensor");
     JsonObject sensor_inf;
     String res_config = getConfig(CONF_ADDR,CONF_PRT,CONF_FULL_FNAME);
+    SerialMon.println("res_config = "+res_config);
     if (res_config != "No data")
     {
         String* mi_list = getSensorID(DEV_ID,res_config, &sensor_num, &sleep_minutes);
@@ -817,6 +826,7 @@ void setup()
             connectToSensor(BLEAddress(mi_list[mi_i].c_str()));
             sensor_inf["Temp"] = tempandhumi.temp;
             sensor_inf["Humi"] = tempandhumi.humi;
+            tempandhumi.temp = ""; tempandhumi.humi = "";
             Serial.println("sensor mac = "+mi_list[mi_i]+", temperature = "+tempandhumi.temp+" C., humidity = "+tempandhumi.humi+"%.");
         }
     }
@@ -846,14 +856,17 @@ void setup()
     Serial.println("log_filename is "+log_filename);
     writelog(log_filename, js_log_str);
     delay(1000);
-    delay(2000);
+    // Have condition to upload?
+
     upload2FTP(FTPS_ADDR,FTPS_PRT,FTPS_USRN,FTPS_PASS,FTPS_TYPE,FTPS_LOG_PATH,log_filename);
     delay(2000);
 
     modulePowerOff();
+    int time_use_m = (((millis() - time_start)/1000)/60);
+    Serial.printf("time_use_m is %d \r\n",time_use_m);
     if (sleep_minutes != 0)  
     {
-        sleep(sleep_minutes);
+        (time_use_m > sleep_minutes)? sleep(sleep_minutes) : sleep(sleep_minutes - time_use_m);
     }
     else
     {
